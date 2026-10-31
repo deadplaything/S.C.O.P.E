@@ -1,6 +1,6 @@
 # S.C.O.P.E.
 Scope Skillchain Monitor FFXI WIndower Addon
-SCOPE — SkillChain Opportunity Prediction Engine
+SCOPE — Skill Chain Opportunity Prediction Engine
 A customizable Final Fantasy XI Windower addon by Integrity / DPT.
 
 Tracks skillchains, suggests follow-up weapon skills, shows magic burst elements and timing, and provides an adjustable HUD with optional voice announcements.
