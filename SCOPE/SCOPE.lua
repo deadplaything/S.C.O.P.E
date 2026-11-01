@@ -1,9 +1,21 @@
 
 
 
--- SCOPE: SkillChain Opportunity Prediction Engine. HUD and assets maintained by Integrity/DPT.
+--[[
+    S.C.O.P.E. — SkillChain Opportunity Prediction Engine
+    Created and maintained by Integrity / DPT
+
+    SCOPE-specific additions, interface designs, and original enhancements
+    contributed by Integrity / DPT are freely available to copy, edit,
+    redistribute, improve, and reuse, including in other projects.
+    No permission or credit is required for those original contributions.
+
+    This permission applies only to material owned by Integrity / DPT.
+    Any third-party code or assets retain their own applicable licenses
+    and attribution requirements.
+]]
 _addon.author = 'Integrity/DPT'
-_addon.command = 'scope'
+_addon.commands = {'scope', 'sc'}
 _addon.name = 'SCOPE'
 _addon.version = '1.0.0'
 
@@ -660,16 +672,17 @@ end
 -- SCOPE: bounded symmetric countdown and aligned recommendation grid
 local images = require('images')
 -- Persistent user HUD preferences (separate from original skillchain settings).
-local hud_preferences = config.load({hud_enabled=true,hud_scale=1,hud_x=650,hud_y=95,audio_enabled=false,audio_countdown=true,audio_started=true,audio_burst=true}, 'reforged_hud')
+local hud_preferences = config.load({hud_enabled=true,hud_scale=1,hud_x=650,hud_y=95,audio_enabled=false,audio_volume=100,audio_countdown=true,audio_started=true,audio_burst=true}, 'reforged_hud')
 local hud = {enabled=hud_preferences.hud_enabled~=false,scale=tonumber(hud_preferences.hud_scale) or 1,x=tonumber(hud_preferences.hud_x) or 650,y=tonumber(hud_preferences.hud_y) or 95,shown=false}
 hud.audio_enabled=hud_preferences.audio_enabled==true
+hud.audio_volume=math.max(0,math.min(100,tonumber(hud_preferences.audio_volume) or 100))
 hud.audio_countdown=hud_preferences.audio_countdown~=false
 hud.audio_started=hud_preferences.audio_started~=false
 hud.audio_burst=hud_preferences.audio_burst~=false
 local function save_hud_preferences()
  hud_preferences.hud_enabled=hud.enabled;hud_preferences.hud_scale=hud.scale
  hud_preferences.hud_x=hud.x;hud_preferences.hud_y=hud.y
- hud_preferences.audio_enabled=hud.audio_enabled;hud_preferences.audio_countdown=hud.audio_countdown
+ hud_preferences.audio_enabled=hud.audio_enabled;hud_preferences.audio_volume=hud.audio_volume;hud_preferences.audio_countdown=hud.audio_countdown
  hud_preferences.audio_started=hud.audio_started;hud_preferences.audio_burst=hud.audio_burst
  config.save(hud_preferences, 'reforged_hud')
 end
@@ -713,6 +726,9 @@ end
 local menu_open=false
 local menu_x,menu_y=35,155
 local menu_bg=new_image('settings_panel_v2.png')
+local audio_slider_track=new_image('audio_slider_track.png')
+local audio_slider_fill=new_image('audio_slider_fill.png')
+local audio_slider_thumb=new_image('audio_slider_thumb.png')
 menu_bg:draggable(false)
 local menu_title=hud_text(13)
 local menu_lines={}
@@ -722,17 +738,25 @@ local drag_offset_x,drag_offset_y=0,0
 local function update_menu()
  if not menu_open then
   menu_bg:hide();menu_title:hide()
+  audio_slider_track:hide();audio_slider_fill:hide();audio_slider_thumb:hide()
   for _,t in ipairs(menu_lines) do t:hide() end
   return
  end
  menu_bg:pos(menu_x,menu_y);menu_bg:size(344,244);menu_bg:show()
  menu_title:hide()
  for _,t in ipairs(menu_lines) do t:hide() end
+ local slider_x,slider_y=menu_x+22,menu_y+110
+ local slider_width=202
+ audio_slider_track:pos(slider_x,slider_y);audio_slider_track:size(slider_width,9);audio_slider_track:show()
+ local fraction=math.max(0,math.min(1,hud.audio_volume/100))
+ audio_slider_fill:pos(slider_x,slider_y);audio_slider_fill:size(math.max(1,math.floor(slider_width*fraction)),9);audio_slider_fill:show()
+ audio_slider_thumb:pos(slider_x+math.floor(slider_width*fraction)-7,slider_y-4)
+ audio_slider_thumb:size(15,17);audio_slider_thumb:show()
  local function put(t,str,x,y,size)
   t:pos(menu_x+x,menu_y+y);t:size(size);t:text(str);t:show()
  end
  -- Values are centered within dedicated, non-overlapping status regions.
- put(menu_lines[1],hud.audio_enabled and 'ON' or 'OFF',196,91,11)
+ put(menu_lines[1],(hud.audio_enabled and 'ON ' or 'OFF ')..tostring(hud.audio_volume)..'%',177,91,10)
  put(menu_lines[2],string.format('%d%%',math.floor(hud.scale*100+0.5)),191,138,12)
  put(menu_lines[3],hud.audio_started and 'ON' or 'OFF',77,199,7)
  put(menu_lines[4],hud.audio_countdown and 'ON' or 'OFF',203,199,7)
@@ -741,7 +765,9 @@ end
 
 local function play_hud_sound(name)
  if not hud.audio_enabled then return end
- local path=windower.addon_path..'sounds/'..name..'.wav'
+ local level=math.max(0,math.min(100,math.floor((hud.audio_volume+10)/20)*20))
+ if level==0 then return end
+ local path=windower.addon_path..'sounds/'..(level==100 and '' or ('volume_'..level..'/'))..name..'.wav'
  if windower.play_sound then pcall(windower.play_sound,path) end
 end
 local last_audio_id,last_audio_step,last_audio_second,last_burst_id
@@ -766,6 +792,12 @@ end
 -- Consume both press AND release; FFXI can react to the release even if
 -- the initial press was consumed. Also intercept movement/scroll over panel.
 local menu_mouse_capture=false
+local audio_slider_drag=false
+local function set_audio_slider_from_x(px)
+ local fraction=math.max(0,math.min(1,(px-22)/202))
+ hud.audio_volume=math.floor(fraction*5+0.5)*20
+ update_menu()
+end
 windower.register_event('mouse',function(event,x,y,delta,blocked)
  if not menu_open and not menu_mouse_capture and not dragging then return end
  -- Windower's mouse callback coordinates are slightly behind the image
@@ -775,6 +807,9 @@ windower.register_event('mouse',function(event,x,y,delta,blocked)
  local px=x-menu_x+mouse_align_x;local py=y-menu_y+mouse_align_y
  local inside=menu_open and px>=0 and px<=344 and py>=0 and py<=244
  if event==2 then
+  if audio_slider_drag then
+   set_audio_slider_from_x(px);audio_slider_drag=false;save_hud_preferences()
+  end
   local capture=menu_mouse_capture or inside or dragging
   if dragging then dragging=false;save_hud_preferences();update_menu() end
   menu_mouse_capture=false
@@ -782,6 +817,7 @@ windower.register_event('mouse',function(event,x,y,delta,blocked)
   return
  end
  if event==0 then
+  if audio_slider_drag then set_audio_slider_from_x(px);return true end
   if dragging then hud.x=x-drag_offset_x;hud.y=y-drag_offset_y;update_menu();return true end
   if inside or menu_mouse_capture then return true end
   return
@@ -797,7 +833,9 @@ windower.register_event('mouse',function(event,x,y,delta,blocked)
   local function hit(x1,y1,x2,y2)
    return px>=x1 and px<=x2 and py>=y1 and py<=y2
   end
-  if hit(301,16,327,40) then menu_open=false
+  if hit(15,103,235,123) then
+   audio_slider_drag=true;set_audio_slider_from_x(px)
+  elseif hit(301,16,327,40) then menu_open=false
   elseif hit(243,85,323,111) then hud.audio_enabled=not hud.audio_enabled
   elseif hit(22,132,83,164) then hud.scale=math.max(.5,math.floor(hud.scale*20-.5)/20)
   elseif hit(261,132,322,164) then hud.scale=math.min(2,math.floor(hud.scale*20+1.5)/20)
@@ -823,12 +861,14 @@ local function all_hud_images()
  for _,im in pairs(icon_cache) do a[#a+1]=im end
  return a
 end
+local hide_damage -- forward declaration
 local function hide_hud()
  for _,im in ipairs(all_hud_images()) do im:hide() end
  for _,t in ipairs({hud.title_shadow,hud.title,hud.clock,hud.burst,hud.burst_header,hud.burst_timer}) do t:hide() end
  for _,t in ipairs(hud.option_labels) do t:hide() end
  for _,t in ipairs(hud.option_results) do t:hide() end
  for _,t in ipairs(hud.burst_labels) do t:hide() end
+ hide_damage()
  for _,shadow in pairs(text_shadows) do shadow:hide() end
  hud.shown=false
 end
@@ -878,6 +918,133 @@ local function suggestions(reson)
  end
  table.sort(options,function(a,b) if a.lvl~=b.lvl then return a.lvl>b.lvl end if a.prop~=b.prop then return a.prop<b.prop end return a.name<b.name end)
  reson.hud_options=options;return options
+end
+-- SCOPE personal damage log for the active target.
+local damage_log={}
+local damage_fade_target=nil
+local damage_fade_started=nil
+local damage_hold_seconds=2
+local damage_fade_seconds=2
+local damage_total_hold_seconds=3
+local damage_total_fade_seconds=5
+local damage_fade_snapshot=nil
+local damage_element_rgb={
+ Fire={255,113,75},Ice={132,222,255},Wind={128,239,172},
+ Earth={230,180,113},Lightning={195,155,255},Water={116,183,255},
+ Light={255,231,164},Dark={200,142,255},Darkness={200,142,255}
+}
+local damage_element_names={'Fire','Ice','Wind','Earth','Lightning','Water','Light','Dark'}
+local function damage_spell_rgb(spell)
+ if not spell then return damage_element_rgb.Light end
+ local element=spell.element
+ if type(element)=='number' then
+  return damage_element_rgb[damage_element_names[element+1]] or damage_element_rgb.Light
+ end
+ if type(element)=='string' then
+  return damage_element_rgb[element] or damage_element_rgb[element:sub(1,1):upper()..element:sub(2):lower()] or damage_element_rgb.Light
+ end
+ return damage_element_rgb.Light
+end
+local damage_labels={}
+local damage_values={}
+for i=1,12 do damage_labels[i]=hud_text(10);damage_values[i]=hud_text(10) end
+local damage_title=hud_text(10)
+local damage_total=hud_text(10)
+local function damage_set_alpha(alpha,total_alpha)
+ alpha=math.max(0,math.min(255,math.floor(alpha)))
+ for _,t in ipairs(damage_labels) do t:alpha(alpha) end
+ for _,t in ipairs(damage_values) do t:alpha(alpha) end
+ damage_title:alpha(alpha)
+ damage_total:alpha(alpha)
+end
+local function dmg_fmt(n)
+ local t=tostring(math.floor(tonumber(n) or 0))
+ return t:reverse():gsub('(%d%d%d)(%d)','%1,%2'):reverse()
+end
+hide_damage = function()
+ damage_title:hide();damage_total:hide()
+ for _,t in ipairs(damage_labels) do t:hide() end
+ for _,t in ipairs(damage_values) do t:hide() end
+end
+local function add_damage(target,kind,name,amount,rgb)
+ amount=tonumber(amount) or 0
+ if not target or amount<=0 then return end
+ local now=os.time()
+ local j=damage_log[target]
+ if not j or now-j.last>18 then j={events={},total=0,last=now};damage_log[target]=j end
+ j.last=now
+ j.events[#j.events+1]={kind=kind,name=name or '?',amount=amount,rgb=rgb}
+ j.total=j.total+amount
+end
+local function capture_damage(p)
+ local target=tonumber(p['Target 1 ID'])
+ if not target then return end
+ local category=tonumber(p.Category)
+ local amount=tonumber(p['Target 1 Action 1 Param']) or 0
+ local player=windower.ffxi.get_player()
+ local mine=player and tonumber(p.Actor)==tonumber(player.id)
+ -- Only local player action packets count toward the damage total.
+ if not mine then return end
+ if category==3 then
+  local ws=res.weapon_skills[tonumber(p.Param) or -1]
+  if ws and amount>0 then add_damage(target,'WS',ws.en,amount) end
+  local effect=tonumber(p['Target 1 Action 1 Added Effect Message'])
+  local sc=effect and skillchains[effect]
+  if sc and p['Target 1 Action 1 Has Added Effect'] then
+   add_damage(target,'SC',sc,p['Target 1 Action 1 Added Effect Param'])
+  end
+ elseif category==4 and mine then
+  local spell=res.spells[tonumber(p.Param) or -1]
+  local burst=(tonumber(p['Target 1 Action 1 Message'])==252)
+   or p['Target 1 Action 1 Magic Burst']==true
+   or p['Target 1 Action 1 Has Magic Burst']==true
+  if spell and burst and amount>0 then add_damage(target,'MB',spell.en,amount,damage_spell_rgb(spell)) end
+ end
+end
+-- Shared layout for the live tracker and the Settings demo.
+-- All coordinates are relative to the existing center HUD anchor and scale.
+local function render_damage_entries(events,total,is_demo,alpha,total_alpha)
+ damage_set_alpha(alpha or 255,total_alpha)
+ local top=76
+ local line_step=19
+ local count=math.min(10,#events)
+ label(damage_title,colorize(is_demo and 'CHAIN DAMAGE (DEMO)' or 'CHAIN DAMAGE',{235,209,154}),-94,top,11)
+ for i=1,count do
+  local e=events[#events-count+i]
+  local rgb=e.rgb or (e.kind=='WS' and {255,222,154} or e.kind=='SC' and {198,153,255} or {125,216,255})
+  local name=tostring(e.name or '?')
+  if #name>22 then name=name:sub(1,20)..'..' end
+  local value=dmg_fmt(e.amount)
+  local y=top+21+(i-1)*line_step
+  -- Names start at x=-142; numbers share a fixed right edge at x=+145.
+  label(damage_labels[i],colorize(name,rgb),-142,y,11)
+  label(damage_values[i],colorize(value,rgb),145-(#value*7),y,11)
+ end
+ for i=count+1,#damage_labels do
+  damage_labels[i]:hide();damage_values[i]:hide()
+ end
+ local total_text=dmg_fmt(total)
+ label(damage_total,colorize('TOTAL   '..total_text,{255,235,186}),145-(#total_text*7)-52,top+25+count*line_step,11)
+end
+local function render_damage(target,alpha,total_alpha,snapshot)
+ local j=snapshot or (target and damage_log[target])
+ if not j or #j.events==0 then
+  label(damage_title,colorize('WAITING FOR DAMAGE...',{235,209,154}),-106,76,11)
+  damage_total:hide()
+  for i=1,#damage_labels do damage_labels[i]:hide();damage_values[i]:hide() end
+  return
+ end
+ render_damage_entries(j.events,j.total,false,alpha,total_alpha)
+end
+-- Settings demo uses exactly the same layout as live damage, without fake combat events.
+local demo_damage_events={
+ {kind='WS',name="Rudra's Storm",amount=48275},
+ {kind='SC',name='Darkness',amount=36920},
+ {kind='MB',name='Stone VI',amount=32841,rgb=damage_element_rgb.Earth},
+ {kind='MB',name='Blizzard V',amount=21406,rgb=damage_element_rgb.Ice},
+}
+local function render_damage_preview()
+ render_damage_entries(demo_damage_events,139442,true)
 end
 local function render_hud(reson,elapsed)
  for _,shadow in pairs(text_shadows) do shadow:hide() end
@@ -986,6 +1153,7 @@ local function render_hud(reson,elapsed)
   for _,im in ipairs(hud.burst_icons) do im:hide() end
   for _,t in ipairs(hud.burst_labels) do t:hide() end
  end
+ render_damage(reson.target_id)
  hud.shown=true
 end
 windower.register_event('prerender', function()
@@ -994,17 +1162,60 @@ windower.register_event('prerender', function()
     for id,reson in pairs(resonating) do
         local duration=reson.chain and 10 or math.max(1,10-((reson.step or 1)-1))
         if not reson.timer or now-reson.timer>=duration then
+            if damage_log[id] and #damage_log[id].events>0 and not damage_fade_started then
+                damage_fade_target=id
+                damage_fade_snapshot=damage_log[id]
+                damage_fade_started=os.clock()
+            end
             resonating[id]=nil
         end
     end
     local reson=targ and resonating[targ.id]
+    -- Preserve the last completed damage sequence even if target disappears.
+    if not (targ and targ.hpp>0 and reson) and not damage_fade_started then
+        local id=damage_fade_target
+        if not id then
+            for candidate,j in pairs(damage_log) do
+                if #j.events>0 and (not id or j.last>(damage_log[id] and damage_log[id].last or 0)) then id=candidate end
+            end
+        end
+        if id and damage_log[id] and #damage_log[id].events>0 then
+            damage_fade_target=id
+            damage_fade_snapshot=damage_log[id]
+            damage_fade_started=os.clock()
+        end
+    end
+    for id,j in pairs(damage_log) do if now-j.last>25 then damage_log[id]=nil end end
     if hud.enabled then
         skill_props:hide()
         if targ and targ.hpp>0 and reson then
+            reson.target_id=targ.id
+            damage_fade_target=nil
+            damage_fade_started=nil
+            damage_fade_snapshot=nil
             render_hud(reson,now-reson.timer)
         else
             hide_hud()
-            if menu_open then render_hud_preview() end
+            if menu_open then
+                render_hud_preview()
+                render_damage_preview()
+            elseif damage_fade_target and damage_fade_started then
+                local elapsed=os.clock()-damage_fade_started
+                local detail_lifetime=damage_hold_seconds+damage_fade_seconds
+                local total_lifetime=detail_lifetime+damage_total_hold_seconds+damage_total_fade_seconds
+                if elapsed<total_lifetime then
+                    local alpha=elapsed<=damage_hold_seconds and 255
+                        or 255*(1-(elapsed-damage_hold_seconds)/damage_fade_seconds)
+                    local total_alpha=elapsed<=detail_lifetime+damage_total_hold_seconds and 255
+                        or 255*(1-(elapsed-detail_lifetime-damage_total_hold_seconds)/damage_total_fade_seconds)
+                    render_damage(damage_fade_target,math.max(0,alpha),math.max(0,total_alpha),damage_fade_snapshot)
+                else
+                    damage_fade_target=nil
+                    damage_fade_started=nil
+                    damage_fade_snapshot=nil
+                    hide_damage()
+                end
+            end
             last_audio_id=nil;last_audio_second=nil;last_burst_id=nil
         end
     else
@@ -1020,6 +1231,7 @@ end)
 windower.register_event('incoming chunk', function(id,original,modified,injected,blocked)
     if id == 0x028 then
         local packet = packets.parse('incoming', original)
+        capture_damage(packet)
         -- Weapon Skill finish
         if packet['Category'] == 3 then
             local abil = res.weapon_skills[packet.Param]
@@ -1070,6 +1282,22 @@ end)
 windower.register_event('addon command', function(...)
     local commands = {...}
     for x=1,#commands do commands[x] = commands[x]:lower() end
+    if commands[1] == 'audio' or commands[1] == 'volume' then
+        local action=commands[2]
+        if action == 'on' then hud.audio_enabled=true
+        elseif action == 'off' then hud.audio_enabled=false
+        elseif action == 'test' then
+            local was_enabled=hud.audio_enabled;hud.audio_enabled=true
+            play_hud_sound('started');hud.audio_enabled=was_enabled
+        elseif tonumber(action) then
+            hud.audio_volume=math.max(0,math.min(100,math.floor(tonumber(action)/20+0.5)*20))
+        else
+            windower.add_to_chat(207,'SCOPE audio: //sc audio 0-100 | //sc audio on/off | //sc audio test')
+        end
+        save_hud_preferences();update_menu()
+        windower.add_to_chat(207,'SCOPE audio: '..tostring(hud.audio_volume)..'% | '..(hud.audio_enabled and 'ON' or 'OFF'))
+        return
+    end
     if commands[1] == 'settings' then
         menu_open=not menu_open;update_menu();return
     elseif commands[1] == 'hud' then
